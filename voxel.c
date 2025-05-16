@@ -125,11 +125,6 @@ typedef struct {
 
 bool is_empty_range(const Range *r) { return r->a > r->b; }
 
-Range intersectRanges(const Range *r1, const Range *r2) {
-    Range r = { fmax(r1->a, r2->a), fmin(r1->b, r2->b) };
-    return r;
-}
-
 typedef struct {
     double x;
     double y;
@@ -145,26 +140,77 @@ double getParameter(double a, double b, double x) {
     return (x - a) / (b - a);
 }
 
-Range getParameterRange(double a, double b) {
-    double p1 = getParameter(a, b, -0.5);
-    double p2 = getParameter(a, b,  0.5);
-    Range r = {fmin(p1, p2), fmax(p1, p2)};
-    return r;
+void reduceParameterRange(Range *r, double a, double b) {
+    const double p1 = getParameter(a, b, -0.5);
+    const double p2 = getParameter(a, b,  0.5);
+    r->a = fmax(r->a, fmin(p1, p2));
+    r->b = fmin(r->b, fmax(p1, p2));
 }
 
 Range intersectUnitCube(const Ray *r) {
     Range r_ = { 0, INFINITY };
-
-    Range rx = getParameterRange(r->p.x, r->q.x);
-    r_ = intersectRanges(&r_, &rx);
-
-    Range ry = getParameterRange(r->p.y, r->q.y);
-    r_ = intersectRanges(&r_, &ry);
-
-    Range rz = getParameterRange(r->p.z, r->q.z);
-    r_ = intersectRanges(&r_, &rz);
-
+    reduceParameterRange(&r_, r->p.x, r->q.x);
+    reduceParameterRange(&r_, r->p.y, r->q.y);
+    reduceParameterRange(&r_, r->p.z, r->q.z);
     return r_;
+}
+
+double dot(const V3 *a, const V3 *b) {
+    return
+        a->x * b->x +
+        a->y * b->y +
+        a->z * b->z
+    ;
+}
+
+double norm2(const V3 *a) { return dot(a, a); }
+
+void add(V3 *a, const V3 *b) {
+    a->x += b->x;
+    a->y += b->y;
+    a->z += b->z;
+}
+
+void add_scaled(V3 *a, const V3 *b, double c) {
+    a->x += b->x * c;
+    a->y += b->y * c;
+    a->z += b->z * c;
+}
+
+void sub(V3 *a, const V3 *b) {
+    a->x -= b->x;
+    a->y -= b->y;
+    a->z -= b->z;
+}
+
+void sub_scaled(V3 *a, const V3 *b, double c) {
+    a->x -= b->x * c;
+    a->y -= b->y * c;
+    a->z -= b->z * c;
+}
+
+void scale(V3 *a, double factor) {
+    a->x *= factor;
+    a->y *= factor;
+    a->z *= factor;
+}
+
+void normalize(V3 *a) {
+    scale(a, 1. / sqrt(norm2(a)));
+}
+
+void normalize_to_length(V3 *a, double length) {
+    scale(a, length / sqrt(norm2(a)));
+}
+
+void orthogonalize(V3 *a, const V3 *b) {
+    sub_scaled(a, b, dot(a, b) / norm2(b));
+}
+
+void cross(V3 *a, const V3 *b, const V3 *c) {
+    a->x = b->y * c->z - b->z * c->y;
+    a->y = b->z * c->x - b->x * c->z;
+    a->z = b->x * c->y - b->y * c->x;
 }
 
 /* Redraw the screen from the surface. Note that the draw
@@ -178,8 +224,28 @@ static void draw_cb(
     int             height,
     gpointer        data_
 ) {
-    const Ray axis = {{0, 0, -50}, {0, 0, 0}};
-    const double px = 30. / 1980.;
+    const V3 target = {0, 0, 0};
+    const V3 origin = {0, 0, -50};
+
+    V3 dz = target;
+    sub(&dz, &origin);
+    normalize(&dz);
+
+    V3 dy = {0, -1, 0};
+    orthogonalize(&dy, &dz);
+    normalize_to_length(&dy, 30. / 50. / 1980.);
+
+    V3 dx;
+    cross(&dx, &dy, &dz);
+    printf("dx %f %f %f\n", dx.x, dx.y, dx.z);
+    printf("dy %f %f %f\n", dy.x, dy.y, dy.z);
+    printf("dz %f %f %f\n", dz.x, dz.y, dz.z);
+
+    V3 base = origin;
+    add(&base, &dz);
+    add_scaled(&base, &dx, (width - 1.) / 2);
+    sub_scaled(&base, &dy, (height - 1.) / 2);
+    printf("base %f %f %f\n", base.x, base.y, base.z);
 
     WindowData *data = (WindowData *)data_;
     cairo_surface_t *surface = data->surface;
@@ -189,17 +255,12 @@ static void draw_cb(
     if (format == CAIRO_FORMAT_ARGB32) {
         unsigned char *image_data = cairo_image_surface_get_data(surface);
         const int stride = cairo_image_surface_get_stride(surface);
+        V3 base_row = base;
         for (int y = 0; y < height; ++y) {
+            V3 point = base_row;
             uint32_t *row = (void *)image_data;
             for (int x = 0; x < width; ++x) {
-                Ray ray = {
-                    axis.p,
-                    {
-                        px * (x - (width - 1.) / 2),
-                        px * ((height - 1.) / 2 - y),
-                        axis.q.z
-                    }
-                };
+                Ray ray = { origin, point };
                 uint32_t r;
                 uint32_t g;
                 uint32_t b;
@@ -210,8 +271,10 @@ static void draw_cb(
                     r = g = b = 255;
                 }
                 row[x] = 255U << 24 | r << 16 | g << 8 | b;
+                add(&point, &dx);
             }
             image_data += stride;
+            add(&base_row, &dy);
         }
     }
     cairo_surface_mark_dirty(surface);
