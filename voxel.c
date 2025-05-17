@@ -236,16 +236,12 @@ static void draw_cb(
     normalize_to_length(&dy, 30. / 50. / 1980.);
 
     V3 dx;
-    cross(&dx, &dy, &dz);
-    printf("dx %f %f %f\n", dx.x, dx.y, dx.z);
-    printf("dy %f %f %f\n", dy.x, dy.y, dy.z);
-    printf("dz %f %f %f\n", dz.x, dz.y, dz.z);
+    cross(&dx, &dz, &dy);
 
     V3 base = origin;
     add(&base, &dz);
-    add_scaled(&base, &dx, (width - 1.) / 2);
+    sub_scaled(&base, &dx, (width - 1.) / 2);
     sub_scaled(&base, &dy, (height - 1.) / 2);
-    printf("base %f %f %f\n", base.x, base.y, base.z);
 
     WindowData *data = (WindowData *)data_;
     cairo_surface_t *surface = data->surface;
