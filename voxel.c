@@ -83,8 +83,10 @@ void test_ppm() {
 
 typedef struct {
     cairo_surface_t *surface;
-    double           start_x;
-    double           start_y;
+    double           prev_x;
+    double           prev_y;
+    double           longitude;
+    double           latitude;
     GtkWidget       *area;
 } WindowData;
 
@@ -224,8 +226,17 @@ static void draw_cb(
     int             height,
     gpointer        data_
 ) {
+    WindowData *data = (WindowData *)data_;
+
+    const double radius = 50;
     const V3 target = {0, 0, 0};
-    const V3 origin = {0, 0, -50};
+    const double cs = cos(data->latitude);
+    const double sn = sin(data->latitude);
+    const V3 origin = {
+        radius * cs * sin(data->longitude),
+        radius * sn                       ,
+        radius * cs * cos(data->longitude)
+    };
 
     V3 dz = target;
     sub(&dz, &origin);
@@ -243,7 +254,6 @@ static void draw_cb(
     sub_scaled(&base, &dx, (width - 1.) / 2);
     sub_scaled(&base, &dy, (height - 1.) / 2);
 
-    WindowData *data = (WindowData *)data_;
     cairo_surface_t *surface = data->surface;
 
     cairo_surface_flush(surface);
@@ -279,31 +289,14 @@ static void draw_cb(
     cairo_paint(cr);
 }
 
-/* Draw a rectangle on the surface at the given position */
-static void draw_brush(double x, double y, WindowData *data) {
-    cairo_t *cr;
-
-    /* Paint to the surface, where we store our state */
-    cr = cairo_create(data->surface);
-
-    cairo_rectangle(cr, x - 3, y - 3, 6, 6);
-    cairo_fill(cr);
-
-    cairo_destroy(cr);
-
-    /* Now invalidate the drawing area. */
-    gtk_widget_queue_draw(data->area);
-}
-
 static void drag_begin(
     GtkGestureDrag *gesture,
     double          x,
     double          y,
     WindowData     *data
 ) {
-    data->start_x = x;
-    data->start_y = y;
-    draw_brush(x, y, data);
+    data->prev_x = 0;
+    data->prev_y = 0;
 }
 
 static void drag_update(
@@ -312,26 +305,12 @@ static void drag_update(
     double          y,
     WindowData     *data
 ) {
-    draw_brush(data->start_x + x, data->start_y + y, data);
-}
+    data->longitude += 0.01 * (x - data->prev_x);
+    data->latitude  += 0.01 * (y - data->prev_y);
+    data->prev_x = x;
+    data->prev_y = y;
 
-static void drag_end(
-    GtkGestureDrag *gesture,
-    double          x,
-    double          y,
-    WindowData     *data
-) {
-    draw_brush(data->start_x + x, data->start_y + y, data);
-}
-
-static void pressed(
-    GtkGestureClick *gesture,
-    int              n_press,
-    double           x,
-    double           y,
-    WindowData      *data
-) {
-    clear_surface(data);
+    /* Now invalidate the drawing area. */
     gtk_widget_queue_draw(data->area);
 }
 
@@ -371,16 +350,6 @@ static void activate(GtkApplication *app, WindowData *data) {
     gtk_widget_add_controller(data->area, GTK_EVENT_CONTROLLER(drag));
     g_signal_connect(drag, "drag-begin", G_CALLBACK(drag_begin), data);
     g_signal_connect(drag, "drag-update", G_CALLBACK(drag_update), data);
-    g_signal_connect(drag, "drag-end", G_CALLBACK(drag_end), data);
-
-    GtkGesture *press = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(
-        GTK_GESTURE_SINGLE(press),
-        GDK_BUTTON_SECONDARY
-    );
-    gtk_widget_add_controller(data->area, GTK_EVENT_CONTROLLER(press));
-
-    g_signal_connect(press, "pressed", G_CALLBACK(pressed), data);
 
     gtk_window_present(GTK_WINDOW(window));
 }
